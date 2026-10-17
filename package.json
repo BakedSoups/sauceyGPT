@@ -1,0 +1,25 @@
+{
+  "name": "sauceygpt",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --use-env-proxy server.js",
+    "dev": "node --watch --use-env-proxy server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "ipaddr.js": "^2.5.0",
+    "pdfjs-dist": "^6.4.299",
+    "undici": "^8.12.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1"
+  }
+}
