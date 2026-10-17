@@ -60,3 +60,22 @@ test('search retries stop after two attempts and never promote unsupported draft
   assert.equal(result.sources.length, 0);
   assert.doesNotMatch(result.answer, /Unsupported initial claim/);
 });
+
+test('selected sauce with supported prose but no requested code searches its documentation for a complete example', async () => {
+  const fact = 'Create a draft using POST /campaigns with a name field.';
+  const document = { url: 'https://docs.example.org/start', sections: [{ page: null, text: fact }] };
+  let searches = 0, rewrites = 0;
+  const researcher = new Researcher({ key: 'test', library: {
+    list: async () => [{ id: 'selected', title: 'Example docs', rootURL: 'https://docs.example.org/docs/' }, { id: 'other', title: 'Other docs', rootURL: 'https://other.example/' }],
+    search: async () => ({ sources: [{ id: 1, title: 'Overview', url: document.url }], documents: new Map([[1, document]]) })
+  }, reader: async source => { assert.match(source.url, /docs.example.org/); return { ...document, url: source.url }; } });
+  researcher.modelCall = async (_, input, signal, extra) => {
+    if (extra.tools) { searches++; assert.equal(input.selectedSources.length, 1); return search(['https://docs.example.org/campaigns', 'https://unrelated.example/api']); }
+    if (extra.text?.format.name === 'grounded_rewrite') return reply({ sentences: [{ text: ++rewrites === 1 ? fact : 'client.post("/campaigns", {"name": "Demo"})', kind: rewrites === 1 ? 'paragraph' : 'code', language: 'python', sourceIds: [1] }] });
+    if (extra.text?.format.name === 'source_evidence') return reply({ matches: [{ claimId: 1, sourceId: 1, supported: true, quotes: [fact] }] });
+    assert.fail('The partial answer should replace a redundant draft call.');
+  };
+  const result = await researcher.run('Show campaign code in Python', [], () => {}, new AbortController().signal, { libraryMode: 'prefer', documentIds: ['selected'] });
+  assert.equal(searches, 1); assert.equal(result.blocks[0][0].kind, 'code');
+  assert.equal(result.sources[0].url, 'https://docs.example.org/campaigns');
+});

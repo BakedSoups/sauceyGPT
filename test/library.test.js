@@ -60,6 +60,22 @@ test('index persists, duplicate uploads do not re-embed, selections filter searc
   const found = await restarted.search('kettle', [], [item.id], signal());
   assert.equal(found.sources[0].local, true); assert.match(found.documents.get(1).sections[0].text, /seventh/);
   await restarted.remove(item.id); assert.equal(points.length, 0); assert.deepEqual(await restarted.list(), []);
+  const parsed = { format: 'text', kind: 'documentation', rootURL: 'https://example.com/docs/', maxPages: 2, sections: [{ heading: 'Kitchen', page: null, text: 'The cobalt kettle is kept on the seventh shelf.', originalURL: 'https://example.com/docs/kitchen' }] };
+  const old = await restarted.upload(Buffer.from('version one'), 'guide.txt', 'Guide', signal(), parsed.rootURL, structuredClone(parsed));
+  const current = await restarted.upload(Buffer.from('version two'), 'guide.txt', 'Guide', signal(), parsed.rootURL, structuredClone(parsed));
+  restarted.importSite = async () => current;
+  await restarted.refresh(old.id, signal());
+  assert.deepEqual((await restarted.list()).map(d => d.id), [current.id]);
+  assert.equal((await restarted.get(old.id)).archived, true); // previous citations retain their snapshot
+  const web = await restarted.search('kettle', [], [current.id], signal());
+  assert.equal(web.sources[0].url, 'https://example.com/docs/kitchen');
+  assert.equal(web.sources[0].local, false);
+  restarted.importSite = async () => { throw new Error('Source unavailable'); };
+  await assert.rejects(restarted.refresh(current.id, signal()), /unavailable/);
+  assert.equal((await restarted.list())[0].id, current.id);
+  await restarted.upload(Buffer.from('version one'), 'guide.txt', 'Guide', signal());
+  assert.equal((await restarted.get(old.id)).archived, undefined); // content reversion is usable again
+
 });
 
 test('library-only answers never call web search and local citations retain page links', async () => {

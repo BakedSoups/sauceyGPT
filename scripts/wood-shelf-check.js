@@ -1,0 +1,32 @@
+import { chromium } from '@playwright/test';
+import assert from 'node:assert/strict';
+const browser=await chromium.launch({executablePath:process.env.BROWSER_EXECUTABLE});
+const page=await browser.newPage({viewport:{width:1200,height:900}});
+try {
+ let docs=[{id:'a'.repeat(64),title:'Klaviyo documentation',originalURL:'https://developers.klaviyo.com/en/docs/get_started',chapters:[{title:'Getting started',id:'start'}],chunkCount:165,pageCount:5},{id:'b'.repeat(64),title:'pandas documentation',chapters:[],chunkCount:40}];
+ await page.route('**/api/library',r=>r.fulfill({json:{documents:docs}}));
+ await page.route('**/api/library/'+ 'a'.repeat(64),r=>{assert.equal(r.request().method(),'DELETE');docs=docs.slice(1);return r.fulfill({json:{removed:true}});});
+ await page.goto('http://localhost:3001');await page.locator('#open-library').click();
+ const jar=page.getByRole('button',{name:'Klaviyo documentation',exact:true});await jar.waitFor();
+ assert.equal(await page.locator('.sauce-state').count(),0);
+ assert.equal(await page.getByRole('button',{name:'Delete',exact:true}).isVisible(),false);
+ await jar.click();assert.equal(await jar.getAttribute('aria-pressed'),'false');
+ await page.locator('[data-shelf=bottom]').click();await page.locator('#sauce-search').fill('klav');
+ assert.equal(await page.locator('.sauce-toggle').count(),1);
+ await page.locator('[data-shelf=top]').click();assert.equal(await page.locator('.sauce-toggle').count(),0);
+ await page.locator('[data-shelf=bottom]').click();await jar.click();
+ assert.equal(await page.locator('[data-shelf=top]').getAttribute('aria-pressed'),'true');
+ assert.equal(await jar.getAttribute('aria-pressed'),'true');
+ await page.locator('#sauce-search').fill('');await page.locator('[data-shelf=all]').click();
+ await page.screenshot({path:'/tmp/sauceygpt-wood-shelves.png'});
+ await page.getByRole('button',{name:'About Klaviyo documentation'}).click();
+ await page.locator('#sauce-info-dialog').waitFor({state:'visible'});
+ assert.equal(await page.getByRole('button',{name:'Refresh',exact:true}).isVisible(),true);
+ await page.getByText('Inside this sauce',{exact:true}).click();assert.equal(await page.getByRole('link',{name:'Getting started'}).isVisible(),true);
+ await page.getByRole('button',{name:'Delete',exact:true}).click();await page.locator('#sauce-info-dialog').waitFor({state:'hidden'});
+ assert.equal(await jar.count(),0);
+ await page.setViewportSize({width:390,height:844});
+ assert.equal(await page.locator('#library-dialog').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+ await page.screenshot({path:'/tmp/sauceygpt-wood-shelves-mobile.png'});
+ console.log('Wooden shelf passed: shelf-scoped search, move jars both ways, info controls, delete, mobile layout.');
+}finally{await browser.close();}

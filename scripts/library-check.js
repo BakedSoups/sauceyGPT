@@ -9,6 +9,7 @@ let document;
 try {
   await page.goto(base);
   await page.locator('#open-library').click();
+  await page.locator('#add-sauce').click();
   await page.locator('#document-title').fill('Workshop handbook');
   const uploaded = page.waitForResponse(r => r.url().endsWith('/api/library/upload'), { timeout: 120000 });
   await page.locator('#document-file').setInputFiles({ name: 'workshop-check.md', mimeType: 'text/markdown', buffer: bytes });
@@ -16,8 +17,10 @@ try {
   assert.equal(upload.status(), 200, JSON.stringify(document));
   assert.equal(document.chapters.length, 2);
   await page.getByText('Workshop handbook', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'About Workshop handbook' }).click();
   await page.locator('.document-toc summary').last().click();
   await page.screenshot({ path: '/tmp/sauceygpt-library.png' });
+  await page.locator('#close-sauce-info').click();
   await page.locator('#close-library').click();
   await page.locator('#library-mode').selectOption('only');
   const start = Date.now();

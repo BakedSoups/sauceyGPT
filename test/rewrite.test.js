@@ -71,3 +71,40 @@ test('remaining citations, evidence, references and history text agree after omi
   assert.doesNotMatch(result.answer, /Unsupported/);
   assert.match(result.notice, /left out/);
 });
+
+test('original code keeps its format and supporting excerpts, while unsupported code is removed', async () => {
+  const quote = 'Create a draft with POST /campaigns and a name field.';
+  const result = makeResult(); let calls = 0;
+  await run(result, async (_, input) => {
+    if (++calls === 1) return response({ sentences: [
+      { kind: 'paragraph', language: '', text: 'Create a campaign draft first.', sourceIds: [1] },
+      { kind: 'code', language: 'javascript', text: 'await client.post("/campaigns", {name: "Example"});', sourceIds: [1] },
+      { kind: 'code', language: 'javascript', text: 'await client.post("/invented");', sourceIds: [1] }
+    ] });
+    assert.equal(input.claims[1].kind, 'code');
+    return response({ matches: [
+      { claimId: 1, sourceId: 1, supported: true, quotes: [quote] },
+      { claimId: 2, sourceId: 1, supported: true, quotes: [quote] },
+      { claimId: 3, sourceId: 1, supported: false, quotes: [] }
+    ] });
+  }, async () => ({ ...doc, sections: [{ page: null, text: quote }] }));
+  assert.equal(result.blocks.length, 2);
+  assert.equal(result.blocks[1][0].kind, 'code'); assert.equal(result.blocks[1][0].language, 'javascript');
+  assert.equal(result.sources[0].evidence[1].quote, quote);
+  assert.doesNotMatch(result.answer, /invented/);
+});
+
+test('complementary sources support one paragraph only when every cited contribution passes', async () => {
+  const kettle = 'The cobalt kettle is on shelf seven.', hours = 'The workshop opens at 08:15 on Tuesdays.';
+  for (const complete of [true, false]) {
+    const result = makeResult(); result.sources.push({ id: 2, title: 'Hours', url: 'https://example.org/hours' });
+    let calls = 0;
+    await run(result, async () => ++calls === 1 ? response({ sentences: [{ text: kettle + ' ' + hours, kind: 'paragraph', language: '', sourceIds: [1, 2] }] }) : response({ matches: [
+      { claimId: 1, sourceId: 1, supported: true, quotes: [kettle] },
+      { claimId: 1, sourceId: 2, supported: complete, quotes: complete ? [hours] : [] }
+    ] }), async source => ({ ...doc, url: source.url, sections: [{ page: null, text: source.id === 1 ? kettle : hours }] }));
+    assert.equal(result.sources.length, complete ? 2 : 0);
+    if (complete) assert.equal(result.answer, kettle + ' ' + hours);
+    else assert.match(result.answer, /couldn’t verify/);
+  }
+});

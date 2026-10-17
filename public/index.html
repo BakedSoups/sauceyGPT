@@ -2,17 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#f7f3ec">
-<title>SauceyGPT</title><link rel="stylesheet" href="/style.css?v=library-4"><script src="/app.js?v=library-4" defer></script>
+<title>SauceyGPT</title><link rel="stylesheet" href="/style.css?v=shelf-15"><script src="/app.js?v=shelf-15" defer></script>
 </head>
 <body>
 <main id="thread" aria-label="Conversation"></main>
 <div class="composer-wrap">
-<div class="library-toolbar"><button type="button" id="open-library">＋ Sources <span id="library-count"></span></button><label class="sr-only" for="library-mode">Where to find answers</label><select id="library-mode"><option value="prefer">Library first, then web</option><option value="only">Library only</option><option value="off">Web only</option></select></div>
+<div class="library-toolbar"><button type="button" id="open-library">Source shelf <span id="library-count"></span></button><label class="sr-only" for="library-mode">Where to find answers</label><select id="library-mode"><option value="prefer">Shelf first, then web</option><option value="only">Shelf only</option><option value="off" selected>Web only</option></select></div>
 <div id="setup" hidden role="status"></div>
 <div id="status" role="status" aria-live="polite"></div>
+<div id="message-sauces"></div>
+<div id="sauce-picker" role="listbox" aria-label="Choose a sauce" hidden></div>
 <form id="composer">
 <label for="question" class="sr-only">Message</label>
-<textarea id="question" rows="1" maxlength="4000" placeholder="Message…" required autofocus></textarea>
+<textarea id="question" rows="1" maxlength="4000" placeholder="Message… type use: to choose a sauce" aria-controls="sauce-picker" aria-expanded="false" aria-autocomplete="list" required autofocus></textarea>
 <button id="stop" type="button" hidden>Stop</button>
 <button id="send" aria-label="Send message" type="submit">↑</button>
 </form>
@@ -22,13 +24,25 @@
 <div id="evidence-body"></div>
 </dialog>
 <dialog id="library-dialog" aria-labelledby="library-title">
-<div class="dialog-heading"><h2 id="library-title">Your sauce shelf</h2><button id="close-library" type="button" aria-label="Close library">×</button></div>
-<p class="library-intro">Add a document once. Ask it questions anytime.</p>
+<div class="dialog-heading"><h2 id="library-title">Source shelf</h2><div class="shelf-header-actions"><button id="add-sauce" type="button">＋ Add a sauce</button><button id="close-library" type="button" aria-label="Close library">×</button></div></div>
+<section id="shelf-view">
+<p class="library-intro">Your sources, bottled.</p>
+<p class="excerpt-note">Click a jar to move it between shelves. The top shelf holds your active sauces.</p>
+<label class="sr-only" for="sauce-search">Search sauces</label><input id="sauce-search" type="search" placeholder="Search sauces or chapters…">
+<div id="shelf-filters" class="shelf-filters" aria-label="Choose a shelf"><button type="button" data-shelf="all" aria-pressed="true">Both shelves</button><button type="button" data-shelf="top" aria-pressed="false">Top shelf</button><button type="button" data-shelf="bottom" aria-pressed="false">Bottom shelf</button></div><div id="library-documents"></div>
+</section>
+<section id="add-sauce-view" hidden><button id="back-to-shelf" type="button">← Back to shelf</button><p class="library-intro">Turn a link into a sauce.</p><p class="excerpt-note">Pick a preset or paste a documentation link, choose how many pages to collect, then click <strong>Make sauce</strong>. Your new jar appears on the top shelf when it is ready.</p>
 <p class="excerpt-note">Files stay on this computer. Extracted text is sent to OpenAI for indexing and answers. PDF, Markdown, TXT, or HTML · up to 20 MB.</p>
-<label class="field-label" for="document-title">Document name <span>(optional)</span></label><input id="document-title" maxlength="180" placeholder="e.g. Astronomy handbook">
+<label class="field-label" for="document-title">Sauce name <span>(optional)</span></label><input id="document-title" maxlength="180" placeholder="e.g. Astronomy handbook">
+<form id="site-form"><label class="field-label" for="site-url">Documentation link</label>
+<div class="site-presets"><button type="button" data-site="pandas">pandas</button><button type="button" data-site="godot">Godot</button><button type="button" data-site="klaviyo">Klaviyo</button></div>
+<input id="site-url" type="url" placeholder="https://example.com/docs/" required>
+<div class="crawl-options"><label for="site-limit">Page limit</label><select id="site-limit"><option>5</option><option selected>10</option><option>20</option><option>30</option></select><button id="import-site" type="submit">Make sauce</button></div>
+<p class="excerpt-note">Follows links within this documentation folder. Refresh a sauce to collect updates. Only the collected pages are searchable.</p></form>
 <input type="file" id="document-file" accept=".pdf,.txt,.md,.markdown,.html,.htm" hidden><button id="upload-document" type="button">Upload document</button>
 <form id="article-form"><label class="field-label" for="article-url">Or add an article</label><div class="article-row"><input id="article-url" type="url" placeholder="https://…" required><button type="submit" id="import-article">Add</button></div></form>
-<p id="library-status" class="excerpt-note" role="status"></p><div id="library-documents"></div>
+</section><p id="library-status" class="excerpt-note" role="status"></p>
 </dialog>
+<dialog id="sauce-info-dialog" aria-labelledby="sauce-info-title"><div class="dialog-heading"><h2 id="sauce-info-title">Sauce details</h2><button id="close-sauce-info" type="button" aria-label="Close sauce details">×</button></div><div id="sauce-info-body"></div></dialog>
 </body>
 </html>

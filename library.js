@@ -49,7 +49,15 @@ export class Library {
   async upload(bytes, name, title, signal, url, supplied) {
     await this.ensure();
     const id = createHash('sha256').update(bytes).digest('hex');
-    try { const { sections, ...existing } = await this.get(id); return { ...existing, duplicate: true }; } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    try {
+      const existing = await this.get(id);
+      if (existing.archived) {
+        delete existing.archived; delete existing.replacedBy;
+        const file = path.join(this.directory, `${id}.json`);
+        await writeFile(file + '.tmp', JSON.stringify(existing), { mode: 0o600 }); await rename(file + '.tmp', file);
+      }
+      const { sections, ...meta } = existing; return { ...meta, duplicate: true };
+    } catch (e) { if (e.code !== 'ENOENT') throw e; }
     const parsed = supplied || await parseUpload(bytes, name, signal);
     if (!parsed.sections.some(s => s.text.length > 30)) throw new Error('No readable text found. Scanned PDFs need OCR before upload.');
     const document = { id, title: (title || name.replace(/\.[^.]+$/, '')).trim().slice(0, 180), ...parsed, createdAt: new Date().toISOString(), originalName: name.slice(0, 200), originalURL: url || null };
