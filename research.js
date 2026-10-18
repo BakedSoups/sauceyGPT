@@ -128,6 +128,14 @@ export function underlineCitations(blocks) {
   });
 }
 
+function providerError(error, status) {
+  const quota = /quota|credit|billing/i.test(`${error?.code || ''} ${error?.message || ''}`);
+  const failure = new Error(quota ? 'OpenAI API credits are exhausted. Add credits to the API account, then retry.'
+    : `OpenAI could not complete the request${status ? ` (HTTP ${status})` : ''}. Please retry.`);
+  failure.providerFailure = true;
+  return failure;
+}
+
 export async function consumeStream(body, onDelta) {
   const decoder = new TextDecoder(); let buffer = '', data = [], completed;
   function dispatch() {
@@ -137,7 +145,7 @@ export async function consumeStream(body, onDelta) {
     const event = JSON.parse(payload);
     if (event.type === 'response.output_text.delta') onDelta(event.delta);
     if (event.type === 'response.completed') completed = event.response;
-    if (['error', 'response.failed', 'response.incomplete'].includes(event.type)) throw new Error('OpenAI did not complete the answer. Please retry.');
+    if (['error', 'response.failed', 'response.incomplete'].includes(event.type)) throw providerError(event.response?.error || event.error || event);
   }
   function line(value) {
     if (value.endsWith('\r')) value = value.slice(0, -1);
@@ -156,9 +164,25 @@ export async function consumeStream(body, onDelta) {
   return completed;
 }
 
+export function wantsCode(query, history = []) {
+  if (/\b(without|do not|don't|no need to)\b.{0,45}\b(code|example|snippet)\b|\bno code\b/i.test(query)) return false;
+  if (/\b(what does|what is|why|would that|does that)\b/i.test(query) && !/\b(show|write|give|include)\b.{0,25}\b(code|example)\b/i.test(query)) return false;
+  return /\b(python|javascript|gdscript|curl|sql|implement)\b|\b(code|script|example)\b/i.test(query)
+    || /\bhow\b.{0,60}\b(api|endpoint)\b/i.test(query);
+}
+
+export function answerScore(result, needsCode) {
+  if (!result?.sources?.length) return 0;
+  const parts = result.blocks.flat();
+  const code = parts.some(p => p.kind === 'code');
+  const prose = parts.some(p => p.kind !== 'code');
+  return (needsCode && code ? 100 : 0) + (prose ? 20 : 0) + Math.min(parts.length, 10);
+}
+
 export class Researcher {
   constructor({ key, model = 'gpt-5.5', request = globalThis.fetch, reader = readDocument, library }) {
     Object.assign(this, { key, model, request, reader, library });
+    this.recentAnswers = new Map();
   }
   async modelCall(instructions, input, signal, extra = {}, onDelta) {
     const response = await this.request('https://api.openai.com/v1/responses', {
@@ -167,16 +191,40 @@ export class Researcher {
         ...(/^gpt-[56]/.test(this.model) ? { reasoning: { effort: 'low' } } : {}),
         ...extra, ...(onDelta ? { stream: true } : {}) })
     });
-    if (!response.ok) throw new Error(`OpenAI returned HTTP ${response.status}. Check your key, model access, quota, and billing.`);
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw providerError(body.error, response.status);
+    }
     const result = onDelta ? await consumeStream(response.body, onDelta) : await response.json();
-    if (result.status !== 'completed') throw new Error('OpenAI did not complete the response. Please retry.');
+    if (result.status !== 'completed') throw providerError(result.error);
     if (!outputText(result)) throw new Error('The model declined or returned no usable answer.');
     return result;
   }
   async run(query, history, emit, signal, options = {}) {
     const started = Date.now(); let firstTextMs;
     let libraryNotice = '', selectedSources = [], localAttempt;
-    const needsCode = /\b(code|python|javascript|curl|api|endpoint|script|sql|implement)\b/i.test(query) || /\bexample\b/i.test(query) && /\b(api|python|code|endpoint|campaign)\b/i.test(history.map(m => m.content).join(' '));
+    const needsCode = wantsCode(query, history);
+    const scope = JSON.stringify([options.libraryMode, [...(options.documentIds || [])].sort()]);
+    const finish = result => {
+      if (result.sources?.length) {
+        this.recentAnswers.set(result.answer.slice(0, 8000), { scope, at: Date.now(), result: structuredClone(result) });
+        while (this.recentAnswers.size > 30) this.recentAnswers.delete(this.recentAnswers.keys().next().value);
+      }
+      return result;
+    };
+    const previous = this.recentAnswers.get(history.filter(m => m.role === 'assistant').at(-1)?.content);
+    if (!needsCode && previous?.scope === scope && Date.now() - previous.at < 15 * 60_000
+        && /\b(that|this|mean|explain|why|scale|would|does)\b/i.test(query)) {
+      emit({ type: 'progress', message: 'Checking your follow-up against the previous answer’s sources…' });
+      const candidate = { sources: structuredClone(previous.result.sources), blocks: [], answer: '' };
+      // Only server-verified excerpts are reused; client history is never evidence.
+      const documents = new Map(candidate.sources.map(source => [source.id, {
+        url: source.url, fetchedAt: source.fetchedAt, format: source.format,
+        sections: source.evidence.flatMap(e => (e.passages || [e]).map(p => ({ text: p.quote, page: p.page })))
+      }]));
+      await rewriteFromSources(candidate, { query, history, draft: '', exampleContext: previous.result.blocks.flat().filter(p => p.kind === 'code').map(p => p.text) }, this.modelCall.bind(this), signal, emit, this.reader, documents);
+      if (candidate.sources.length) return finish({ ...candidate, provider: 'Previous answer sources', timings: { totalMs: Date.now() - started } });
+    }
     if (this.library?.list && options.libraryMode !== 'off') {
       const docs = await this.library.list().catch(() => []);
       selectedSources = docs.filter(d => options.documentIds === undefined || options.documentIds.includes(d.id)).map(d => ({ title: d.title, url: d.rootURL || d.originalURL })).filter(d => d.url);
@@ -189,12 +237,12 @@ export class Researcher {
           const local = { sources: found.sources, answer: '', blocks: [] };
           await rewriteFromSources(local, { query, history, draft: '' }, this.modelCall.bind(this), signal, emit, this.reader, found.documents);
           localAttempt = local;
-          const sufficient = local.sources.length && !local.omittedCode && (!needsCode || local.blocks.some(b => b[0].kind === 'code'));
-          if (sufficient || options.libraryMode === 'only') return { ...local, provider: 'Document library', timings: { totalMs: Date.now() - started } };
+          const sufficient = local.sources.length && !local.omittedCode && (!needsCode || local.blocks.some(b => b[0].kind === 'code') && (!/explain|how to use/i.test(query) || local.blocks.some(b => b[0].kind !== 'code')));
+          if (sufficient || options.libraryMode === 'only') return finish({ ...local, provider: 'Document library', timings: { totalMs: Date.now() - started } });
         }
         if (options.libraryMode === 'only') return { blocks: [[{ text: 'I couldn’t find supporting passages in the selected documents. Try another chapter or add a source.' }]], sources: [], answer: 'No supporting passages found in the selected documents.', provider: 'Document library', notice: '', timings: { totalMs: Date.now() - started } };
       } catch (error) {
-        if (signal.aborted || options.libraryMode === 'only') throw error;
+        if (signal.aborted || error.providerFailure || options.libraryMode === 'only') throw error;
         libraryNotice = 'The document library was unavailable, so this answer uses web sources.';
       }
       emit({ type: 'progress', message: selectedSources.length ? 'The saved pages are missing details. Searching the selected documentation for the endpoint and example…' : 'Looking for additional evidence on the web…' });
@@ -215,7 +263,7 @@ export class Researcher {
       if (!cache.has(key)) cache.set(key, Promise.resolve().then(() => this.reader(source, readSignal)));
       return cache.get(key);
     };
-    let result;
+    let result = localAttempt;
     for (let attempt = 0; attempt < 2; attempt++) {
       if (attempt) emit({ type: 'progress', message: 'Trying different searches and alternative readable sources…' });
       const response = await this.modelCall(searchInstructions + (attempt ?
@@ -231,12 +279,12 @@ export class Researcher {
       if (!candidate.answer.trim()) throw new Error('No usable search answer was returned. The preview remains unverified.');
       await rewriteFromSources(candidate, { query, history, draft }, this.modelCall.bind(this), signal, emit, reader);
       attempts.push(candidate.retrieval);
-      result = candidate;
-      if (result.sources.length && !result.omittedCode && (!needsCode || result.blocks.some(b => b[0].kind === 'code'))) break;
+      if (!result || answerScore(candidate, needsCode) > answerScore(result, needsCode)) result = candidate;
+      if (result.sources.length && !result.omittedCode && (!needsCode || result.blocks.some(b => b[0].kind === 'code') && (!/explain|how to use/i.test(query) || result.blocks.some(b => b[0].kind !== 'code')))) break;
     }
     result.searchAttempts = attempts.length;
     result.retrievalAttempts = attempts;
-    return { ...result, provider: 'OpenAI web search', timings: { firstTextMs, totalMs: Date.now() - started },
-      notice: [libraryNotice, result.notice || (result.sources.length ? '' : 'No usable source citations were returned. This answer is not source-verified.')].filter(Boolean).join(' ') };
+    return finish({ ...result, provider: 'OpenAI web search', timings: { firstTextMs, totalMs: Date.now() - started },
+      notice: [libraryNotice, result.notice || (result.sources.length ? '' : 'No usable source citations were returned. This answer is not source-verified.')].filter(Boolean).join(' ') });
   }
 }
